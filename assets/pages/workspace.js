@@ -470,13 +470,20 @@
           byCat.map(function (r) { return '<tr><td class="py-2 text-slate-600">' + e(r[0]) + ' (expenses)</td><td class="py-2 text-right font-semibold text-slate-800">' + money(r[1]) + '</td></tr>'; }).join('') +
           '<tr class="border-t-2 border-slate-200"><td class="py-2 font-bold text-slate-800">Total</td><td class="py-2 text-right font-bold text-brand">' + money(c.totalExpenses) + '</td></tr>' +
         '</tbody></table>' +
-        '<button onclick="window.print()" class="mt-4 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-semibold rounded-xl flex items-center gap-1.5">' + icon('download', 15) + ' Print / Save as PDF</button></div>';
+        '<div class="mt-4 flex flex-wrap gap-2">' +
+          '<button id="projXls" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl flex items-center gap-1.5">' + icon('bar-chart', 15) + ' Export Excel</button>' +
+          '<button id="projPdf" class="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-sm font-semibold rounded-xl flex items-center gap-1.5">' + icon('arrow-up-right', 15) + ' Export PDF</button>' +
+        '</div>' +
+        '<p class="text-[11px] text-slate-400 mt-2">Full report for this project — includes summary, construction, materials, estimation, expenses &amp; progress.</p></div>';
   }
 
   /* ---------------- wiring (event handlers) ---------------- */
   function wireSection(c) {
     var go = function () { location.href = backUrl(); };
     var root = document.getElementById('secContent');
+
+    var bx = document.getElementById('projXls'); if (bx) bx.addEventListener('click', function () { exportProjectExcel(c); });
+    var bp = document.getElementById('projPdf'); if (bp) bp.addEventListener('click', function () { exportProjectPdf(c); });
 
     var delProject = document.getElementById('delProject');
     if (delProject) delProject.addEventListener('click', function () {
@@ -578,6 +585,140 @@
       reader.onerror = function () { finalize(null, 'File could not be read — record kept without file.'); };
       reader.readAsDataURL(file);
     } else { finalize(null, null); }
+  }
+
+  /* ---------------- Project report exports (Excel + PDF) ---------------- */
+  function projectData(c) {
+    var client = project.client_id ? TZ.db.get('clients', project.client_id) : null;
+    var estimates = TZ.db.where('project_estimates', function (i) { return i.project_id === pid; }).sort(function (a, b) { return a.id - b.id; });
+    var progress = TZ.db.where('project_progress', function (l) { return l.project_id === pid; }).sort(function (a, b) { var d = String(b.log_date).localeCompare(String(a.log_date)); return d !== 0 ? d : b.id - a.id; });
+    var mats = c.mats.slice().sort(function (a, b) { return (a.name || '').toLowerCase() < (b.name || '').toLowerCase() ? -1 : 1; });
+    var exps = c.exps.slice().sort(function (a, b) { return String(b.exp_date).localeCompare(String(a.exp_date)); });
+    var catMap = {}; exps.forEach(function (x) { var k = x.category || 'Uncategorised'; catMap[k] = (catMap[k] || 0) + num(x.amount); });
+    var byCat = Object.keys(catMap).map(function (k) { return [k, catMap[k]]; }).sort(function (a, b) { return b[1] - a[1]; });
+    var estTotal = estimates.reduce(function (a, it) { return a + num(it.amount); }, 0);
+    return { client: client, estimates: estimates, estTotal: estTotal, progress: progress, mats: mats, exps: exps, byCat: byCat };
+  }
+  function fileSlug(s) { return String(s || 'project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project'; }
+
+  function exportProjectExcel(c) {
+    var d = projectData(c), cur = CUR, generated = TZ.reportStamp(), det = c.det;
+    var th = 'style="background:#0F2B4C;color:#fff;font-weight:bold;border:1px solid #ccc;padding:4px"';
+    var td = 'style="border:1px solid #ddd;padding:4px"';
+    var tdb = 'style="border:1px solid #ddd;padding:4px;font-weight:bold;background:#eef2f7"';
+    var rnd = function (v) { return Math.round((Number(v) || 0) * 100) / 100; };
+    var stat = function (s) { return TZ.ucfirst(TZ.dashToSpace(s || '')); };
+    function sheet(title, headers, rows, totalRow) {
+      var span = Math.max(headers.length, 1);
+      var s = '<table border="1"><tr><td colspan="' + span + '" ' + th + '>' + e(title) + '</td></tr>';
+      if (headers.length) s += '<tr>' + headers.map(function (x) { return '<td ' + th + '>' + e(x) + '</td>'; }).join('') + '</tr>';
+      if (!rows.length) s += '<tr><td colspan="' + span + '" ' + td + '>None recorded</td></tr>';
+      else s += rows.map(function (row) { return '<tr>' + row.map(function (cell) { return '<td ' + td + '>' + (typeof cell === 'number' ? rnd(cell) : e(cell == null ? '' : cell)) + '</td>'; }).join('') + '</tr>'; }).join('');
+      if (totalRow) s += '<tr>' + totalRow.map(function (cell) { return '<td ' + tdb + '>' + (typeof cell === 'number' ? rnd(cell) : e(cell == null ? '' : cell)) + '</td>'; }).join('') + '</tr>';
+      return s + '</table><br>';
+    }
+    var out = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body>' +
+      '<table><tr><td colspan="10" style="font-size:16px;font-weight:bold">Trackzo — Project Report: ' + e(project.name) + '</td></tr>' +
+      '<tr><td colspan="10">Generated: ' + e(generated) + ' · all amounts in ' + e(cur) + '</td></tr></table><br>';
+    out += sheet('PROJECT SUMMARY', ['Field', 'Value'], [
+      ['Project', project.name], ['Client', d.client ? d.client.name : ''], ['Type', project.type || ''], ['Status', stat(project.status)],
+      ['Manager', project.manager || ''], ['Start date', project.start_date || ''], ['End date', project.end_date || ''],
+      ['Budget (' + cur + ')', num(project.budget)], ['Total spent (' + cur + ')', c.totalExpenses], ['Remaining (' + cur + ')', c.remaining],
+      ['Material cost (' + cur + ')', c.materialCost], ['Tracked expenses (' + cur + ')', c.expenseTotal], ['Labour cost (' + cur + ')', c.labourCost],
+      ['Progress %', c.progress], ['Area (sqft)', num(project.area)], ['Floors', num(project.floors)],
+    ]);
+    out += sheet('CONSTRUCTION DETAILS', ['Field', 'Value'], [
+      ['Construction type', det.construction_type || ''], ['Structure type', det.structure_type || ''],
+      ['Foundation type', det.foundation_type || ''], ['Roofing type', det.roofing_type || ''],
+      ['Number of floors', num(det.num_floors)], ['Number of units', num(det.num_units)],
+      ['Plot area (sqft)', num(det.plot_area)], ['Built-up (sqft)', num(det.builtup_sqft)],
+    ]);
+    out += sheet('MATERIALS', ['Material', 'Category', 'Quantity', 'Unit', 'Unit Cost (' + cur + ')', 'Amount (' + cur + ')', 'Used', 'Left', 'Supplier', 'Date & Time'],
+      d.mats.map(function (m) { return [m.name, m.category, num(m.quantity), m.unit, num(m.cost), num(m.total_cost), num(m.used_qty), num(m.quantity) - num(m.used_qty), m.supplier, m.purchase_date]; }),
+      ['TOTAL', '', '', '', '', c.materialCost, '', '', '', '']);
+    out += sheet('COST ESTIMATION', ['Description', 'Unit', 'Qty', 'Rate (' + cur + ')', 'Amount (' + cur + ')'],
+      d.estimates.map(function (it) { return [it.description, it.unit, num(it.qty), num(it.rate), num(it.amount)]; }),
+      ['TOTAL', '', '', '', d.estTotal]);
+    out += sheet('EXPENSES', ['Date', 'Description', 'Category', 'Amount (' + cur + ')'],
+      d.exps.map(function (x) { return [x.exp_date, x.description, x.category, num(x.amount)]; }),
+      ['TOTAL', '', '', c.expenseTotal]);
+    out += sheet('EXPENSES BY CATEGORY', ['Category', 'Amount (' + cur + ')'], d.byCat.map(function (r) { return [r[0], r[1]]; }));
+    out += sheet('CONSTRUCTION PROGRESS', ['Date', 'Stage', 'Percent', 'Status', 'Note'],
+      d.progress.map(function (l) { return [l.log_date, l.stage, num(l.percent), l.status, l.note]; }));
+    out += '</body></html>';
+    var blob = new Blob(['﻿' + out], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'trackzo-project-' + fileSlug(project.name) + '-' + TZ.todayISO() + '.xls';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  function exportProjectPdf(c) {
+    var d = projectData(c), cur = CUR, generated = TZ.reportStamp(), det = c.det;
+    function mny(v) { v = Number(v) || 0; return cur + (v < 0 ? '-' : '') + TZ.inrGroup(Math.abs(v)); }
+    function M(v) { return { __html: mny(v) }; }
+    function N(v) { return { __html: TZ.trimNum(v, 2) }; }
+    var stat = function (s) { return TZ.ucfirst(TZ.dashToSpace(s || '')); };
+    function T(title, cols, rows, totalRow) {
+      function cell(cc, i, style) {
+        var a = cols[i] && cols[i].a ? ' class="' + cols[i].a + '"' : '';
+        var v = (cc && cc.__html != null) ? cc.__html : e(cc == null ? '' : cc);
+        return '<td' + a + (style ? ' style="' + style + '"' : '') + '>' + v + '</td>';
+      }
+      var head = cols.map(function (cc) { return '<th' + (cc.a ? ' class="' + cc.a + '"' : '') + '>' + e(cc.t) + '</th>'; }).join('');
+      var bd = rows.length ? rows.map(function (cells) { return '<tr>' + cells.map(function (cc, i) { return cell(cc, i); }).join('') + '</tr>'; }).join('')
+        : '<tr><td colspan="' + cols.length + '" style="color:#94a3b8">None recorded</td></tr>';
+      var tot = totalRow ? '<tr>' + totalRow.map(function (cc, i) { return cell(cc, i, 'font-weight:700;background:#f1f5f9'); }).join('') + '</tr>' : '';
+      return '<h2>' + e(title) + '</h2><table><thead><tr>' + head + '</tr></thead><tbody>' + bd + tot + '</tbody></table>';
+    }
+    var css = '*{box-sizing:border-box;margin:0;padding:0}' +
+      "body{font-family:'Segoe UI',Arial,sans-serif;color:#0f172a;background:#fff;padding:32px;font-size:12px}" +
+      '.bar{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #1D4ED8;padding-bottom:14px;margin-bottom:20px}' +
+      '.brand{display:flex;align-items:center;gap:10px}.logo{width:38px;height:38px;border-radius:9px;background:#1D4ED8;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px}' +
+      'h1{font-size:20px;color:#0F2B4C}.sub{color:#64748b;font-size:11px}' +
+      'h2{font-size:13px;color:#0F2B4C;margin:22px 0 8px;padding-bottom:5px;border-bottom:1px solid #e2e8f0;text-transform:uppercase;letter-spacing:.04em}' +
+      'table{width:100%;border-collapse:collapse;margin-top:6px}th{background:#0F2B4C;color:#fff;text-align:left;padding:7px 9px;font-size:11px}' +
+      'td{padding:6px 9px;border-bottom:1px solid #eef2f7}tr:nth-child(even) td{background:#f8fafc}.r{text-align:right}.c{text-align:center}' +
+      '.cards{display:flex;gap:12px;margin-bottom:6px;flex-wrap:wrap}.card{flex:1;min-width:120px;border:1px solid #e2e8f0;border-radius:10px;padding:12px}' +
+      '.card .k{font-size:10px;color:#64748b;text-transform:uppercase}.card .v{font-size:18px;font-weight:800;color:#0F2B4C;margin-top:3px}.pos{color:#059669}.neg{color:#e11d48}' +
+      '.toolbar{position:fixed;top:14px;right:14px}.btn{background:#1D4ED8;color:#fff;border:0;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}' +
+      '@media print{.toolbar{display:none}body{padding:0}}';
+    var body = '<div class="toolbar"><button class="btn" onclick="window.print()">🖨 Save as PDF</button></div>' +
+      '<div class="bar"><div class="brand"><div class="logo">T</div><div><h1>' + e(project.name) + '</h1><div class="sub">Project Report · ' + e(project.type || 'Project') + ' · ' + stat(project.status) + ' · amounts in ' + cur + '</div></div></div>' +
+        '<div class="sub" style="text-align:right">Generated<br><strong>' + e(generated) + '</strong></div></div>' +
+      '<div class="cards">' +
+        '<div class="card"><div class="k">Budget</div><div class="v">' + mny(c.budget) + '</div></div>' +
+        '<div class="card"><div class="k">Total Spent</div><div class="v neg">' + mny(c.totalExpenses) + '</div></div>' +
+        '<div class="card"><div class="k">Remaining</div><div class="v ' + (c.remaining < 0 ? 'neg' : 'pos') + '">' + mny(c.remaining) + '</div></div>' +
+        '<div class="card"><div class="k">Progress</div><div class="v">' + c.progress + '%</div></div></div>' +
+      T('Project Details', [{ t: 'Field' }, { t: 'Value' }], [
+        ['Client', d.client ? d.client.name : ''], ['Manager', project.manager || ''], ['Type', project.type || ''],
+        ['Status', stat(project.status)], ['Start date', project.start_date || ''], ['End date', project.end_date || ''],
+        ['Area (sqft)', N(project.area)], ['Floors', { __html: String(num(project.floors)) }],
+        ['Material cost', M(c.materialCost)], ['Tracked expenses', M(c.expenseTotal)], ['Labour cost', M(c.labourCost)],
+      ]) +
+      T('Construction Details', [{ t: 'Field' }, { t: 'Value' }], [
+        ['Construction type', det.construction_type || ''], ['Structure type', det.structure_type || ''],
+        ['Foundation type', det.foundation_type || ''], ['Roofing type', det.roofing_type || ''],
+        ['Number of floors', { __html: String(num(det.num_floors)) }], ['Number of units', { __html: String(num(det.num_units)) }],
+        ['Plot area (sqft)', N(det.plot_area)], ['Built-up (sqft)', N(det.builtup_sqft)],
+      ]) +
+      T('Materials', [{ t: 'Material' }, { t: 'Category' }, { t: 'Qty', a: 'r' }, { t: 'Unit' }, { t: 'Unit Cost', a: 'r' }, { t: 'Amount', a: 'r' }, { t: 'Used', a: 'r' }, { t: 'Left', a: 'r' }, { t: 'Supplier' }, { t: 'Date & Time' }],
+        d.mats.map(function (m) { return [m.name, m.category, N(m.quantity), m.unit, M(m.cost), M(m.total_cost), N(m.used_qty), N(num(m.quantity) - num(m.used_qty)), m.supplier, m.purchase_date]; }),
+        ['Total', '', '', '', '', M(c.materialCost), '', '', '', '']) +
+      T('Cost Estimation', [{ t: 'Description' }, { t: 'Unit' }, { t: 'Qty', a: 'r' }, { t: 'Rate', a: 'r' }, { t: 'Amount', a: 'r' }],
+        d.estimates.map(function (it) { return [it.description, it.unit, N(it.qty), M(it.rate), M(it.amount)]; }),
+        ['Total', '', '', '', M(d.estTotal)]) +
+      T('Expenses', [{ t: 'Date' }, { t: 'Description' }, { t: 'Category' }, { t: 'Amount', a: 'r' }],
+        d.exps.map(function (x) { return [x.exp_date, x.description, x.category, M(x.amount)]; }),
+        ['Total', '', '', M(c.expenseTotal)]) +
+      T('Construction Progress', [{ t: 'Date' }, { t: 'Stage' }, { t: 'Percent', a: 'c' }, { t: 'Status' }, { t: 'Note' }],
+        d.progress.map(function (l) { return [l.log_date, l.stage, { __html: num(l.percent) + '%' }, l.status, l.note]; }));
+    var win = window.open('', '_blank');
+    if (!win) { TZ.flash('Please allow pop-ups to export the PDF.', 'warning'); return; }
+    win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + e(project.name) + ' — Report</title><style>' + css + '</style></head><body>' + body + '</body></html>');
+    win.document.close(); win.focus();
+    setTimeout(function () { try { win.print(); } catch (ex) {} }, 500);
   }
 
   function onSubmit(id, handler) {
