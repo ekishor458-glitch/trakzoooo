@@ -244,52 +244,79 @@
     if (editM && editM.project_id !== pid) editM = null;
     var matCats = ['Cement', 'Steel', 'Sand', 'Bricks', 'Aggregate', 'Tiles', 'Paint', 'Plumbing', 'Electrical', 'Wood', 'Hardware', 'Other'];
     var catOpts = {}; matCats.forEach(function (m) { catOpts[m] = m; });
-    var rows = c.mats.slice().sort(function (a, b) { return b.id - a.id; });
 
-    var body = rows.map(function (m) {
-      var left = num(m.quantity) - num(m.used_qty);
-      return '<tr class="hover:bg-slate-50/70">' +
-        '<td class="px-4 py-3"><p class="font-semibold text-slate-800">' + e(m.name) + '</p><p class="text-xs text-slate-400">' + e(m.category) + ' · ' + e(m.purchase_date || '—') + '</p></td>' +
-        '<td class="px-4 py-3 hidden md:table-cell text-slate-500">' + e(m.supplier || '—') + '</td>' +
-        '<td class="px-4 py-3 text-right text-slate-600">' + trimNum(m.quantity, 2) + ' <span class="text-[10px] text-slate-400">' + e(m.unit) + '</span></td>' +
-        '<td class="px-4 py-3 text-right text-slate-600">' + trimNum(m.used_qty, 2) + '</td>' +
-        '<td class="px-4 py-3 text-right font-semibold ' + (left <= 0 ? 'text-rose-500' : 'text-emerald-600') + '">' + trimNum(left, 2) + '</td>' +
-        '<td class="px-4 py-3 text-right text-slate-600">' + money(m.cost) + '</td>' +
-        '<td class="px-4 py-3 text-right font-bold text-slate-800">' + money(m.total_cost) + '</td>' +
-        '<td class="px-4 py-3"><div class="flex items-center justify-end gap-1.5">' +
-          '<a href="' + secUrl('materials') + '&mid=' + m.id + '" class="w-8 h-8 rounded-lg bg-slate-50 hover:bg-blue-50 text-slate-500 hover:text-blue-600 flex items-center justify-center">' + icon('edit', 15) + '</a>' +
-          '<button data-delmat="' + m.id + '" class="w-8 h-8 rounded-lg bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-600 flex items-center justify-center">' + icon('trash', 15) + '</button>' +
-        '</div></td></tr>';
+    // Group purchases by material name — each group is one item (e.g. Cement),
+    // with every purchase listed underneath as a dated entry.
+    var groups = {}, order = [];
+    c.mats.forEach(function (m) {
+      var key = (m.name || 'Unnamed').trim().toLowerCase();
+      if (!groups[key]) { groups[key] = { name: (m.name || 'Unnamed').trim(), category: m.category || '', unit: m.unit || '', items: [], qty: 0, used: 0, total: 0 }; order.push(key); }
+      var g = groups[key];
+      g.items.push(m); g.qty += num(m.quantity); g.used += num(m.used_qty); g.total += num(m.total_cost);
+      if (!g.unit) g.unit = m.unit || '';
+      if (!g.category) g.category = m.category || '';
+    });
+    order.sort(function (a, b) { return groups[a].name.toLowerCase() < groups[b].name.toLowerCase() ? -1 : 1; });
+
+    var body = order.map(function (key) {
+      var g = groups[key], gleft = g.qty - g.used;
+      var header = '<tr class="bg-slate-50/80 border-t-2 border-slate-200">' +
+        '<td colspan="5" class="px-4 py-2.5"><span class="font-bold text-slate-800">' + e(g.name) + '</span>' +
+          '<span class="text-[11px] font-semibold px-2 py-0.5 rounded-lg bg-blue-100 text-blue-700 ml-2">' + e(g.category || '—') + '</span></td>' +
+        '<td colspan="3" class="px-4 py-2.5 text-right text-xs text-slate-500">' + g.items.length + ' entr' + (g.items.length > 1 ? 'ies' : 'y') +
+          ' · <span class="font-semibold text-slate-700">' + trimNum(g.qty, 2) + ' ' + e(g.unit) + '</span>' +
+          ' · left <span class="font-semibold ' + (gleft <= 0 ? 'text-rose-500' : 'text-emerald-600') + '">' + trimNum(gleft, 2) + '</span>' +
+          ' · <span class="font-bold text-slate-800">' + money(g.total) + '</span></td></tr>';
+      var entries = g.items.slice().sort(function (a, b) {
+        var d = String(b.purchase_date).localeCompare(String(a.purchase_date)); return d !== 0 ? d : b.id - a.id;
+      }).map(function (m) {
+        var left = num(m.quantity) - num(m.used_qty);
+        return '<tr class="hover:bg-slate-50/70">' +
+          '<td class="px-4 py-3 whitespace-nowrap text-slate-600">' + e(m.purchase_date || '—') + '</td>' +
+          '<td class="px-4 py-3 hidden md:table-cell text-slate-500">' + e(m.supplier || '—') + '</td>' +
+          '<td class="px-4 py-3 text-right text-slate-600">' + trimNum(m.quantity, 2) + ' <span class="text-[10px] text-slate-400">' + e(m.unit) + '</span></td>' +
+          '<td class="px-4 py-3 text-right text-slate-600">' + money(m.cost) + '</td>' +
+          '<td class="px-4 py-3 text-right font-bold text-slate-800">' + money(m.total_cost) + '</td>' +
+          '<td class="px-4 py-3 text-right text-slate-600">' + trimNum(m.used_qty, 2) + '</td>' +
+          '<td class="px-4 py-3 text-right font-semibold ' + (left <= 0 ? 'text-rose-500' : 'text-emerald-600') + '">' + trimNum(left, 2) + '</td>' +
+          '<td class="px-4 py-3"><div class="flex items-center justify-end gap-1.5">' +
+            '<a href="' + secUrl('materials') + '&mid=' + m.id + '" class="w-8 h-8 rounded-lg bg-slate-50 hover:bg-blue-50 text-slate-500 hover:text-blue-600 flex items-center justify-center">' + icon('edit', 15) + '</a>' +
+            '<button data-delmat="' + m.id + '" class="w-8 h-8 rounded-lg bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-600 flex items-center justify-center">' + icon('trash', 15) + '</button>' +
+          '</div></td></tr>';
+      }).join('');
+      return header + entries;
     }).join('');
-    if (!rows.length) body = '<tr><td colspan="8" class="px-4 py-8 text-center text-slate-400">No materials yet. Add one below.</td></tr>';
-    var foot = rows.length ? '<tfoot><tr class="bg-slate-50 border-t border-slate-100"><td colspan="6" class="px-4 py-2.5 text-right text-xs font-semibold text-slate-500 uppercase">Total material cost</td><td class="px-4 py-2.5 text-right font-bold text-slate-800">' + money(c.materialCost) + '</td><td></td></tr></tfoot>' : '';
+    if (!order.length) body = '<tr><td colspan="8" class="px-4 py-8 text-center text-slate-400">No materials yet. Add one below.</td></tr>';
+    var foot = order.length ? '<tfoot><tr class="bg-slate-50 border-t-2 border-slate-200"><td colspan="4" class="px-4 py-2.5 text-right text-xs font-semibold text-slate-500 uppercase">Total material cost</td><td class="px-4 py-2.5 text-right font-bold text-slate-800">' + money(c.materialCost) + '</td><td colspan="3"></td></tr></tfoot>' : '';
 
-    return sectionHead('Material Management', 'Track construction materials for this project') +
+    var editDate = editM && editM.purchase_date ? String(editM.purchase_date).slice(0, 10) : TZ.todayISO();
+
+    return sectionHead('Material Management', 'Each material is grouped by name — add the same item again to log another dated purchase') +
       '<div class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
         '<thead><tr class="text-left text-xs text-slate-400 uppercase tracking-wider bg-slate-50 border-b border-slate-100">' +
-          '<th class="px-4 py-3 font-semibold">Material</th><th class="px-4 py-3 font-semibold hidden md:table-cell">Supplier</th>' +
-          '<th class="px-4 py-3 font-semibold text-right">Qty</th><th class="px-4 py-3 font-semibold text-right">Used</th>' +
-          '<th class="px-4 py-3 font-semibold text-right">Left</th><th class="px-4 py-3 font-semibold text-right">Unit Cost</th>' +
-          '<th class="px-4 py-3 font-semibold text-right">Total</th><th class="px-4 py-3"></th></tr></thead>' +
+          '<th class="px-4 py-3 font-semibold">Date &amp; Time</th><th class="px-4 py-3 font-semibold hidden md:table-cell">Supplier</th>' +
+          '<th class="px-4 py-3 font-semibold text-right">Quantity</th><th class="px-4 py-3 font-semibold text-right">Unit Cost</th>' +
+          '<th class="px-4 py-3 font-semibold text-right">Amount</th><th class="px-4 py-3 font-semibold text-right">Used</th>' +
+          '<th class="px-4 py-3 font-semibold text-right">Left</th><th class="px-4 py-3"></th></tr></thead>' +
         '<tbody class="divide-y divide-slate-100">' + body + '</tbody>' + foot + '</table></div></div>' +
 
       '<div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">' +
-        '<p class="text-sm font-bold text-slate-800 font-display mb-3">' + (editM ? 'Edit material' : 'Add material') + '</p>' +
+        '<p class="text-sm font-bold text-slate-800 font-display mb-3">' + (editM ? 'Edit purchase entry' : 'Add material purchase') + '</p>' +
         '<form id="matForm" class="grid grid-cols-2 md:grid-cols-4 gap-3">' +
           '<input type="hidden" name="id" value="' + (editM ? editM.id : 0) + '">' +
-          '<div class="col-span-2">' + F('Material name', 'name', editM && editM.name, 'text', 'e.g. Portland Cement') + '</div>' +
+          '<div class="col-span-2">' + F('Material name', 'name', editM && editM.name, 'text', 'e.g. Cement') + '</div>' +
           S('Category', 'category', catOpts, (editM && editM.category) || 'Cement') +
           F('Supplier', 'supplier', editM && editM.supplier, 'text', 'Supplier name') +
           F('Quantity', 'quantity', editM && editM.quantity, 'number', '0', 'step="0.01"') +
           F('Unit', 'unit', editM && editM.unit, 'text', 'Bags / MT / Cu.ft') +
           F('Unit cost (' + CUR + ')', 'cost', editM && editM.cost, 'number', '0', 'step="0.01"') +
           F('Used quantity', 'used_qty', editM ? editM.used_qty : '0', 'number', '0', 'step="0.01"') +
-          F('Purchase date', 'purchase_date', (editM && editM.purchase_date) || TZ.todayISO(), 'date') +
+          F('Date', 'purchase_date', editDate, 'date') +
           '<div class="col-span-2 md:col-span-4 flex gap-2">' +
-            '<button class="px-5 py-2.5 bg-brand hover:bg-brand-hover text-white text-sm font-semibold rounded-xl flex items-center gap-1.5">' + icon(editM ? 'edit' : 'plus', 16) + (editM ? 'Save changes' : 'Add material') + '</button>' +
+            '<button class="px-5 py-2.5 bg-brand hover:bg-brand-hover text-white text-sm font-semibold rounded-xl flex items-center gap-1.5">' + icon(editM ? 'edit' : 'plus', 16) + (editM ? 'Save changes' : 'Add purchase') + '</button>' +
             (editM ? '<a href="' + secUrl('materials') + '" class="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-semibold rounded-xl">Cancel</a>' : '') +
           '</div></form>' +
-        '<p class="text-[11px] text-slate-400 mt-2">Total cost is calculated automatically as Quantity × Unit cost. Remaining = Quantity − Used.</p></div>';
+        '<p class="text-[11px] text-slate-400 mt-2">The time is recorded automatically. Amount = Quantity × Unit cost. Left = Quantity − Used. Same material name groups entries together.</p></div>';
   }
 
   /* ---- COST ESTIMATION ---- */
@@ -473,9 +500,18 @@
 
     onSubmit('matForm', function (d) {
       var qty = Number(d.quantity) || 0, cost = Number(d.cost) || 0, id = parseInt(d.id, 10) || 0;
-      var rec = { project_id: pid, name: (d.name || '').trim(), category: (d.category || '').trim(), quantity: qty, unit: (d.unit || '').trim(), cost: cost, supplier: (d.supplier || '').trim(), purchase_date: d.purchase_date || null, used_qty: Number(d.used_qty) || 0, total_cost: qty * cost };
-      if (id > 0) { TZ.db.update('project_materials', id, rec); TZ.flash('Material updated.'); }
-      else { TZ.db.insert('project_materials', rec); TZ.flash('Material added.'); }
+      var dateStr = d.purchase_date || TZ.todayISO();
+      var nowTime = TZ.nowStamp().slice(11);   // "HH:MM"
+      var rec = { project_id: pid, name: (d.name || '').trim(), category: (d.category || '').trim(), quantity: qty, unit: (d.unit || '').trim(), cost: cost, supplier: (d.supplier || '').trim(), used_qty: Number(d.used_qty) || 0, total_cost: qty * cost };
+      if (id > 0) {
+        var existing = TZ.db.get('project_materials', id);
+        var oldTime = existing && existing.purchase_date && String(existing.purchase_date).length > 10 ? String(existing.purchase_date).slice(11) : nowTime;
+        rec.purchase_date = dateStr + ' ' + oldTime;   // keep original time on edit
+        TZ.db.update('project_materials', id, rec); TZ.flash('Purchase updated.');
+      } else {
+        rec.purchase_date = dateStr + ' ' + nowTime;   // stamp date + time of entry
+        TZ.db.insert('project_materials', rec); TZ.flash('Purchase added.');
+      }
       go();
     });
     delegate(root, 'data-delmat', function (id) { if (confirm('Delete this material?')) { TZ.db.remove('project_materials', id); TZ.flash('Material deleted.', 'info'); go(); } });
