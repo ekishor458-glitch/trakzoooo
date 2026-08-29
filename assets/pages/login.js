@@ -53,7 +53,10 @@
                   '<div><label class="block text-xs font-semibold text-slate-600 mb-1.5">Email address</label>' +
                     '<input type="email" name="email" value="' + e(TZ.ADMIN_EMAIL) + '" placeholder="you@company.com" class="fld"></div>' +
                   '<div><div class="flex justify-between items-center mb-1.5"><label class="block text-xs font-semibold text-slate-600">Password</label><span class="text-xs text-blue-600">Forgot password?</span></div>' +
-                    '<input type="password" name="password" value="admin123" placeholder="••••••••" class="fld"></div>' +
+                    '<div class="relative">' +
+                      '<input id="signinPwd" type="password" name="password" value="admin123" placeholder="••••••••" class="fld" style="padding-right:2.75rem">' +
+                      '<button type="button" id="signinPwdToggle" tabindex="-1" aria-label="Show password" class="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600">' + icon('eye', 18) + '</button>' +
+                    '</div></div>' +
                   '<div id="signinError" class="hidden bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-600"></div>' +
                   '<button type="submit" class="w-full flex items-center justify-center gap-2 py-3 bg-brand hover:bg-brand-hover text-white font-semibold rounded-xl text-sm">' + icon('login', 16) + ' Sign In</button>' +
                 '</form>' +
@@ -73,7 +76,7 @@
             '</div></div>' +
             '<p class="mt-6 text-center text-xs text-slate-400"><span id="switchHint"></span><button type="button" id="switchBtn" class="text-blue-600 font-semibold hover:underline"></button></p>' +
           '</div>' +
-          '<p class="mt-4 text-center text-[11px] text-slate-400">Demo accounts — Admin: <strong>admin@gmail.com</strong> / admin123 · Member: <strong>rajesh@buildcorp.in</strong> / demo123</p>' +
+          '<p class="mt-4 text-center text-[11px] text-slate-400">Admin login — <strong>admin@gmail.com</strong> / admin123</p>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -95,6 +98,20 @@
   document.getElementById('tabIn').addEventListener('click', function () { setMode('signin'); });
   document.getElementById('tabUp').addEventListener('click', function () { setMode('signup'); });
   document.getElementById('switchBtn').addEventListener('click', function () { setMode(track.dataset.mode === 'signup' ? 'signin' : 'signup'); });
+
+  // Show/hide password toggle
+  (function () {
+    var input = document.getElementById('signinPwd');
+    var btn = document.getElementById('signinPwdToggle');
+    if (!input || !btn) return;
+    btn.addEventListener('click', function () {
+      var show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.innerHTML = icon(show ? 'eye-off' : 'eye', 18);
+      btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      input.focus();
+    });
+  })();
 
   function showErr(id, msg) { var el = document.getElementById(id); el.textContent = msg; el.classList.remove('hidden'); }
 
