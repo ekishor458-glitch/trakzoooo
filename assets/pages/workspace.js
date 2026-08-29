@@ -319,35 +319,76 @@
         '<p class="text-[11px] text-slate-400 mt-2">The time is recorded automatically. Amount = Quantity × Unit cost. Left = Quantity − Used. Same material name groups entries together.</p></div>';
   }
 
-  /* ---- COST ESTIMATION ---- */
+  // Floor options derived from construction details (num_floors) or project floors.
+  function floorList(c) {
+    var n = num(c.det && c.det.num_floors) || num(project.floors) || 3;
+    if (n > 30) n = 30;
+    var list = ['Foundation'];
+    for (var i = 1; i <= n; i++) list.push('Floor ' + i);
+    list.push('Common / External');
+    return list;
+  }
+
+  /* ---- COST ESTIMATION (floor-wise) ---- */
   function sec_estimation(c) {
     var items = TZ.db.where('project_estimates', function (i) { return i.project_id === pid; }).sort(function (a, b) { return a.id - b.id; });
     var estTotal = items.reduce(function (a, it) { return a + num(it.amount); }, 0);
-    var body = items.map(function (it) {
-      return '<tr class="hover:bg-slate-50/70">' +
-        '<td class="px-4 py-3 font-medium text-slate-800">' + e(it.description) + '</td>' +
-        '<td class="px-4 py-3 hidden sm:table-cell text-slate-500">' + e(it.unit) + '</td>' +
-        '<td class="px-4 py-3 text-right text-slate-600">' + trimNum(it.qty, 2) + '</td>' +
-        '<td class="px-4 py-3 text-right text-slate-600">' + money(it.rate) + '</td>' +
-        '<td class="px-4 py-3 text-right font-semibold text-slate-800">' + money(it.amount) + '</td>' +
-        '<td class="px-4 py-3 text-right"><button data-delest="' + it.id + '" class="w-8 h-8 rounded-lg bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-600 flex items-center justify-center">' + icon('trash', 15) + '</button></td></tr>';
-    }).join('');
-    if (!items.length) body = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-400">No estimate lines yet.</td></tr>';
-    var foot = items.length ? '<tfoot><tr class="bg-slate-50 border-t border-slate-100"><td colspan="4" class="px-4 py-2.5 text-right text-xs font-semibold text-slate-500 uppercase">Estimated total</td><td class="px-4 py-2.5 text-right font-bold text-brand">' + money(estTotal) + '</td><td></td></tr></tfoot>' : '';
 
-    return sectionHead('Cost Estimation', 'Build a line-item estimate for this project') +
+    // Group line items by floor
+    var groups = {}, present = [];
+    items.forEach(function (it) {
+      var fl = (it.floor && String(it.floor).trim()) || 'Unassigned';
+      if (!groups[fl]) { groups[fl] = { floor: fl, items: [], total: 0 }; present.push(fl); }
+      groups[fl].items.push(it); groups[fl].total += num(it.amount);
+    });
+    var fl = floorList(c);
+    var floorOpts = {}; fl.forEach(function (f) { floorOpts[f] = f; });
+    var order = [];
+    fl.forEach(function (f) { if (groups[f]) order.push(f); });
+    present.forEach(function (f) { if (order.indexOf(f) < 0) order.push(f); });
+
+    var summary = order.length ? '<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">' + order.map(function (f) {
+      var g = groups[f];
+      return '<div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-4"><p class="text-xs text-slate-500">' + e(g.floor) + '</p>' +
+        '<p class="text-lg font-bold text-slate-900 font-display">' + money(g.total) + '</p>' +
+        '<p class="text-[11px] text-slate-400">' + g.items.length + ' item' + (g.items.length > 1 ? 's' : '') + '</p></div>';
+    }).join('') + '</div>' : '';
+
+    var body = order.map(function (f) {
+      var g = groups[f];
+      var header = '<tr class="bg-slate-50/80 border-t-2 border-slate-200">' +
+        '<td colspan="4" class="px-4 py-2.5"><span class="font-bold text-slate-800">' + e(g.floor) + '</span> <span class="text-[11px] text-slate-400 ml-1">' + g.items.length + ' item' + (g.items.length > 1 ? 's' : '') + '</span></td>' +
+        '<td class="px-4 py-2.5 text-right font-bold text-brand">' + money(g.total) + '</td><td></td></tr>';
+      var rows = g.items.map(function (it) {
+        return '<tr class="hover:bg-slate-50/70">' +
+          '<td class="px-4 py-3 font-medium text-slate-800">' + e(it.description) + '</td>' +
+          '<td class="px-4 py-3 hidden sm:table-cell text-slate-500">' + e(it.unit) + '</td>' +
+          '<td class="px-4 py-3 text-right text-slate-600">' + trimNum(it.qty, 2) + '</td>' +
+          '<td class="px-4 py-3 text-right text-slate-600">' + money(it.rate) + '</td>' +
+          '<td class="px-4 py-3 text-right font-semibold text-slate-800">' + money(it.amount) + '</td>' +
+          '<td class="px-4 py-3 text-right"><button data-delest="' + it.id + '" class="w-8 h-8 rounded-lg bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-600 flex items-center justify-center">' + icon('trash', 15) + '</button></td></tr>';
+      }).join('');
+      return header + rows;
+    }).join('');
+    if (!items.length) body = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-400">No estimate lines yet. Pick a floor and add one below.</td></tr>';
+    var foot = items.length ? '<tfoot><tr class="bg-slate-50 border-t-2 border-slate-200"><td colspan="4" class="px-4 py-2.5 text-right text-xs font-semibold text-slate-500 uppercase">Grand total (all floors)</td><td class="px-4 py-2.5 text-right font-bold text-brand">' + money(estTotal) + '</td><td></td></tr></tfoot>' : '';
+
+    return sectionHead('Cost Estimation', 'Floor-wise estimate — each floor shows its total amount and the materials / work used') +
+      summary +
       '<div class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
         '<thead><tr class="text-left text-xs text-slate-400 uppercase tracking-wider bg-slate-50 border-b border-slate-100">' +
-          '<th class="px-4 py-3 font-semibold">Description</th><th class="px-4 py-3 font-semibold hidden sm:table-cell">Unit</th>' +
+          '<th class="px-4 py-3 font-semibold">Material / Work</th><th class="px-4 py-3 font-semibold hidden sm:table-cell">Unit</th>' +
           '<th class="px-4 py-3 font-semibold text-right">Qty</th><th class="px-4 py-3 font-semibold text-right">Rate</th>' +
           '<th class="px-4 py-3 font-semibold text-right">Amount</th><th class="px-4 py-3"></th></tr></thead>' +
         '<tbody class="divide-y divide-slate-100">' + body + '</tbody>' + foot + '</table></div></div>' +
-      '<div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-5"><p class="text-sm font-bold text-slate-800 font-display mb-3">Add estimate line</p>' +
-        '<form id="estForm" class="grid grid-cols-2 md:grid-cols-5 gap-3 items-end">' +
-          '<div class="col-span-2">' + F('Description', 'description', '', 'text', 'e.g. RCC slab casting') + '</div>' +
-          F('Unit', 'unit', '', 'text', 'Sq.ft / Nos') + F('Qty', 'qty', '1', 'number', '0', 'step="0.01"') + F('Rate (' + CUR + ')', 'rate', '0', 'number', '0', 'step="0.01"') +
-          '<div class="col-span-2 md:col-span-5"><button class="px-5 py-2.5 bg-brand hover:bg-brand-hover text-white text-sm font-semibold rounded-xl flex items-center gap-1.5">' + icon('plus', 16) + 'Add line</button></div>' +
-        '</form></div>';
+      '<div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-5"><p class="text-sm font-bold text-slate-800 font-display mb-3">Add line to a floor</p>' +
+        '<form id="estForm" class="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">' +
+          S('Floor', 'floor', floorOpts, 'Floor 1') +
+          '<div class="col-span-2">' + F('Material / Work', 'description', '', 'text', 'e.g. Cement, Steel, RCC slab') + '</div>' +
+          F('Unit', 'unit', '', 'text', 'Sq.ft / Bags') + F('Qty', 'qty', '1', 'number', '0', 'step="0.01"') + F('Rate (' + CUR + ')', 'rate', '0', 'number', '0', 'step="0.01"') +
+          '<div class="col-span-2 md:col-span-6"><button class="px-5 py-2.5 bg-brand hover:bg-brand-hover text-white text-sm font-semibold rounded-xl flex items-center gap-1.5">' + icon('plus', 16) + 'Add line</button></div>' +
+        '</form>' +
+        '<p class="text-[11px] text-slate-400 mt-2">Choose the floor, then add each material / work item with its quantity and rate. Amount = Qty × Rate. Lines group under their floor with a floor total.</p></div>';
   }
 
   /* ---- EXPENSE TRACKER ---- */
@@ -525,7 +566,7 @@
 
     onSubmit('estForm', function (d) {
       var qty = Number(d.qty) || 0, rate = Number(d.rate) || 0;
-      TZ.db.insert('project_estimates', { project_id: pid, description: (d.description || '').trim(), unit: (d.unit || '').trim(), qty: qty, rate: rate, amount: qty * rate });
+      TZ.db.insert('project_estimates', { project_id: pid, floor: (d.floor || '').trim(), description: (d.description || '').trim(), unit: (d.unit || '').trim(), qty: qty, rate: rate, amount: qty * rate });
       TZ.flash('Estimate line added.'); go();
     });
     delegate(root, 'data-delest', function (id) { if (confirm('Remove line?')) { TZ.db.remove('project_estimates', id); TZ.flash('Line removed.', 'info'); go(); } });
@@ -590,7 +631,7 @@
   /* ---------------- Project report exports (Excel + PDF) ---------------- */
   function projectData(c) {
     var client = project.client_id ? TZ.db.get('clients', project.client_id) : null;
-    var estimates = TZ.db.where('project_estimates', function (i) { return i.project_id === pid; }).sort(function (a, b) { return a.id - b.id; });
+    var estimates = TZ.db.where('project_estimates', function (i) { return i.project_id === pid; }).sort(function (a, b) { var fa = a.floor || '', fb = b.floor || ''; if (fa !== fb) return fa < fb ? -1 : 1; return a.id - b.id; });
     var progress = TZ.db.where('project_progress', function (l) { return l.project_id === pid; }).sort(function (a, b) { var d = String(b.log_date).localeCompare(String(a.log_date)); return d !== 0 ? d : b.id - a.id; });
     var mats = c.mats.slice().sort(function (a, b) { return (a.name || '').toLowerCase() < (b.name || '').toLowerCase() ? -1 : 1; });
     var exps = c.exps.slice().sort(function (a, b) { return String(b.exp_date).localeCompare(String(a.exp_date)); });
@@ -636,9 +677,9 @@
     out += sheet('MATERIALS', ['Material', 'Category', 'Quantity', 'Unit', 'Unit Cost (' + cur + ')', 'Amount (' + cur + ')', 'Used', 'Left', 'Supplier', 'Date & Time'],
       d.mats.map(function (m) { return [m.name, m.category, num(m.quantity), m.unit, num(m.cost), num(m.total_cost), num(m.used_qty), num(m.quantity) - num(m.used_qty), m.supplier, m.purchase_date]; }),
       ['TOTAL', '', '', '', '', c.materialCost, '', '', '', '']);
-    out += sheet('COST ESTIMATION', ['Description', 'Unit', 'Qty', 'Rate (' + cur + ')', 'Amount (' + cur + ')'],
-      d.estimates.map(function (it) { return [it.description, it.unit, num(it.qty), num(it.rate), num(it.amount)]; }),
-      ['TOTAL', '', '', '', d.estTotal]);
+    out += sheet('COST ESTIMATION (BY FLOOR)', ['Floor', 'Material / Work', 'Unit', 'Qty', 'Rate (' + cur + ')', 'Amount (' + cur + ')'],
+      d.estimates.map(function (it) { return [it.floor || 'Unassigned', it.description, it.unit, num(it.qty), num(it.rate), num(it.amount)]; }),
+      ['TOTAL', '', '', '', '', d.estTotal]);
     out += sheet('EXPENSES', ['Date', 'Description', 'Category', 'Amount (' + cur + ')'],
       d.exps.map(function (x) { return [x.exp_date, x.description, x.category, num(x.amount)]; }),
       ['TOTAL', '', '', c.expenseTotal]);
@@ -706,9 +747,9 @@
       T('Materials', [{ t: 'Material' }, { t: 'Category' }, { t: 'Qty', a: 'r' }, { t: 'Unit' }, { t: 'Unit Cost', a: 'r' }, { t: 'Amount', a: 'r' }, { t: 'Used', a: 'r' }, { t: 'Left', a: 'r' }, { t: 'Supplier' }, { t: 'Date & Time' }],
         d.mats.map(function (m) { return [m.name, m.category, N(m.quantity), m.unit, M(m.cost), M(m.total_cost), N(m.used_qty), N(num(m.quantity) - num(m.used_qty)), m.supplier, m.purchase_date]; }),
         ['Total', '', '', '', '', M(c.materialCost), '', '', '', '']) +
-      T('Cost Estimation', [{ t: 'Description' }, { t: 'Unit' }, { t: 'Qty', a: 'r' }, { t: 'Rate', a: 'r' }, { t: 'Amount', a: 'r' }],
-        d.estimates.map(function (it) { return [it.description, it.unit, N(it.qty), M(it.rate), M(it.amount)]; }),
-        ['Total', '', '', '', M(d.estTotal)]) +
+      T('Cost Estimation (by floor)', [{ t: 'Floor' }, { t: 'Material / Work' }, { t: 'Unit' }, { t: 'Qty', a: 'r' }, { t: 'Rate', a: 'r' }, { t: 'Amount', a: 'r' }],
+        d.estimates.map(function (it) { return [it.floor || 'Unassigned', it.description, it.unit, N(it.qty), M(it.rate), M(it.amount)]; }),
+        ['Total', '', '', '', '', M(d.estTotal)]) +
       T('Expenses', [{ t: 'Date' }, { t: 'Description' }, { t: 'Category' }, { t: 'Amount', a: 'r' }],
         d.exps.map(function (x) { return [x.exp_date, x.description, x.category, M(x.amount)]; }),
         ['Total', '', '', M(c.expenseTotal)]) +

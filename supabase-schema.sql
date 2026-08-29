@@ -84,9 +84,11 @@ create table if not exists project_expenses (
 
 create table if not exists project_estimates (
   id bigint primary key,
-  project_id bigint, description text, unit text,
+  project_id bigint, floor text, description text, unit text,
   qty double precision, rate double precision, amount double precision
 );
+-- If the table already existed without the floor column, add it:
+alter table project_estimates add column if not exists floor text;
 
 create table if not exists project_progress (
   id bigint primary key,
