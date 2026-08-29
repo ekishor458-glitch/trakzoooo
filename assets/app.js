@@ -44,6 +44,9 @@
 
   TZ.mount = function (opts, renderFn) {
     if (!TZ.requireLogin()) return;
+    (TZ.ready || Promise.resolve()).then(function () { mountNow(opts, renderFn); });
+  };
+  function mountNow(opts, renderFn) {
     opts = opts || {};
     var page = opts.page || 'dashboard';
     var title = opts.title || 'Dashboard';
