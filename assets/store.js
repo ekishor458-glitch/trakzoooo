@@ -23,6 +23,8 @@
   var USER_KEY = 'trackzo_user';
   var FLASH_KEY = 'trackzo_flash';
   var OUTBOX_KEY = 'trackzo_outbox';
+  var VER_KEY = 'trackzo_db_v';
+  var DB_VERSION = 2;   // bump to force a one-time wipe of stale local business data
 
   /* ---------------- Formatting (ports of helpers.php) ---------------- */
   function esc(v) {
@@ -117,7 +119,15 @@
     try { DB = JSON.parse(localStorage.getItem(DB_KEY) || 'null'); } catch (e) { DB = null; }
     if (!DB) DB = {};
     TABLES.forEach(function (t) { if (!DB[t]) DB[t] = []; });
-    if (!DB.users.length) DB.users = seedAdmin();   // ensure an admin login always exists
+    // One-time migration: wipe stale seeded/demo business data left in the browser
+    // by older versions. Skipped if there are unsynced local writes waiting.
+    var storedV = 0;
+    try { storedV = parseInt(localStorage.getItem(VER_KEY) || '0', 10) || 0; } catch (e) {}
+    if (storedV < DB_VERSION) {
+      if (!getOutbox().length) CLOUD_TABLES.forEach(function (t) { DB[t] = []; });
+      try { localStorage.setItem(VER_KEY, String(DB_VERSION)); } catch (e) {}
+    }
+    if (!DB.users || !DB.users.length) DB.users = seedAdmin();   // ensure an admin login always exists
     persist();
     return DB;
   }
