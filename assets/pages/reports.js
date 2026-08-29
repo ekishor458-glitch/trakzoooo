@@ -57,32 +57,73 @@
     var generated = TZ.reportStamp(), cur = TZ.CUR;
     var th = 'style="background:#0F2B4C;color:#fff;font-weight:bold;border:1px solid #ccc;padding:4px"';
     var td = 'style="border:1px solid #ddd;padding:4px"';
+    var tdb = 'style="border:1px solid #ddd;padding:4px;font-weight:bold;background:#eef2f7"';
     var rnd = function (v) { return Math.round((Number(v) || 0) * 100) / 100; };
-    var h = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body>' +
-      '<table><tr><td colspan="6" style="font-size:16px;font-weight:bold">Trackzo — Business Report</td></tr>' +
-      '<tr><td colspan="6">Generated: ' + e(generated) + ' (all amounts in ' + e(cur) + ')</td></tr></table><br>' +
-      '<table border="1"><tr><td colspan="2" ' + th + '>FINANCIAL SUMMARY</td></tr>' +
-        '<tr><td ' + td + '>Total Income (' + cur + ')</td><td ' + td + '>' + rnd(r.income) + '</td></tr>' +
-        '<tr><td ' + td + '>Total Expense (' + cur + ')</td><td ' + td + '>' + rnd(r.expense) + '</td></tr>' +
-        '<tr><td ' + td + '>Pending / Overdue (' + cur + ')</td><td ' + td + '>' + rnd(r.pending) + '</td></tr>' +
-        '<tr><td ' + td + '><b>Net Position (' + cur + ')</b></td><td ' + td + '><b>' + rnd(r.net) + '</b></td></tr></table><br>' +
-      '<table border="1"><tr><td colspan="2" ' + th + '>EXPENSES BY CATEGORY</td></tr><tr><td ' + th + '>Category</td><td ' + th + '>Amount (' + cur + ')</td></tr>' +
-        r.byCat.map(function (c) { return '<tr><td ' + td + '>' + e(c.category) + '</td><td ' + td + '>' + rnd(c.total) + '</td></tr>'; }).join('') + '</table><br>' +
-      '<table border="1"><tr><td colspan="4" ' + th + '>PROJECT BUDGET UTILIZATION</td></tr>' +
-        '<tr><td ' + th + '>Project</td><td ' + th + '>Budget (' + cur + ')</td><td ' + th + '>Spent (' + cur + ')</td><td ' + th + '>Used %</td></tr>' +
-        r.projUtil.map(function (p) { var pct = num(p.budget) > 0 ? Math.round(num(p.spent) / num(p.budget) * 100) : 0; return '<tr><td ' + td + '>' + e(p.name) + '</td><td ' + td + '>' + rnd(p.budget) + '</td><td ' + td + '>' + rnd(p.spent) + '</td><td ' + td + '>' + pct + '</td></tr>'; }).join('') + '</table><br>' +
-      '<table border="1"><tr><td colspan="4" ' + th + '>TOP CLIENTS</td></tr>' +
-        '<tr><td ' + th + '>Client</td><td ' + th + '>Company</td><td ' + th + '>Projects</td><td ' + th + '>Portfolio Value (' + cur + ')</td></tr>' +
-        r.topClients.map(function (c) { return '<tr><td ' + td + '>' + e(c.name) + '</td><td ' + td + '>' + e(c.company) + '</td><td ' + td + '>' + c.pc + '</td><td ' + td + '>' + rnd(c.val) + '</td></tr>'; }).join('') + '</table><br>' +
-      '<table border="1"><tr><td colspan="6" ' + th + '>TRANSACTIONS LEDGER</td></tr>' +
-        '<tr><td ' + th + '>Date</td><td ' + th + '>Description</td><td ' + th + '>Category</td><td ' + th + '>Project</td><td ' + th + '>Type</td><td ' + th + '>Amount (' + cur + ')</td></tr>' +
-        r.txns.map(function (t) { return '<tr><td ' + td + '>' + e(t.txn_date) + '</td><td ' + td + '>' + e(t.description) + '</td><td ' + td + '>' + e(t.category) + '</td><td ' + td + '>' + e(t.pname || '-') + '</td><td ' + td + '>' + TZ.ucfirst(t.type) + '</td><td ' + td + '>' + rnd(t.amount) + '</td></tr>'; }).join('') + '</table>' +
-      '</body></html>';
+    var stat = function (s) { return TZ.ucfirst(TZ.dashToSpace(s || '')); };
 
-    var blob = new Blob(['﻿' + h], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    // Build one titled table. headers=[], rows=[[...]]; numbers formatted, blanks -> ''.
+    function sheet(title, headers, rows, totalRow) {
+      var span = Math.max(headers.length, 1);
+      var h = '<table border="1"><tr><td colspan="' + span + '" ' + th + '>' + e(title) + '</td></tr>';
+      if (headers.length) h += '<tr>' + headers.map(function (x) { return '<td ' + th + '>' + e(x) + '</td>'; }).join('') + '</tr>';
+      if (!rows.length) h += '<tr><td colspan="' + span + '" ' + td + '>None recorded</td></tr>';
+      else h += rows.map(function (row) {
+        return '<tr>' + row.map(function (cell) { return '<td ' + td + '>' + (typeof cell === 'number' ? rnd(cell) : e(cell == null ? '' : cell)) + '</td>'; }).join('') + '</tr>';
+      }).join('');
+      if (totalRow) h += '<tr>' + totalRow.map(function (cell) { return '<td ' + tdb + '>' + (typeof cell === 'number' ? rnd(cell) : e(cell == null ? '' : cell)) + '</td>'; }).join('') + '</tr>';
+      return h + '</table><br>';
+    }
+
+    var out = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body>' +
+      '<table><tr><td colspan="11" style="font-size:16px;font-weight:bold">Trackzo — Full Business Report</td></tr>' +
+      '<tr><td colspan="11">Generated: ' + e(generated) + ' · all amounts in ' + e(cur) + '</td></tr></table><br>';
+
+    out += sheet('FINANCIAL SUMMARY', ['Metric', 'Amount (' + cur + ')'], [
+      ['Total Income', r.income], ['Total Expense', r.expense], ['Pending / Overdue', r.pending], ['Net Position', r.net],
+      ['Project Material Cost', r.projMaterialTotal], ['Inventory Stock Value', r.inventoryValue],
+      ['Purchase Orders Total', r.poTotal], ['Accounts Balance', r.accountsTotal],
+    ]);
+
+    out += sheet('EXPENSES BY CATEGORY', ['Category', 'Amount (' + cur + ')'],
+      r.byCat.map(function (c) { return [c.category, c.total]; }));
+
+    out += sheet('PROJECTS OVERVIEW', ['Project', 'Client', 'Type', 'Status', 'Budget', 'Spent', 'Remaining', 'Progress %', 'Area (sqft)', 'Floors', 'Manager', 'Start', 'End'],
+      r.projects.map(function (p) { return [p.name, p.client, p.type, stat(p.status), p.budget, p.spent, p.remaining, p.progress, p.area, p.floors, p.manager, p.start_date, p.end_date]; }));
+
+    out += sheet('PROJECT BUDGET UTILIZATION', ['Project', 'Budget (' + cur + ')', 'Spent (' + cur + ')', 'Remaining (' + cur + ')', 'Used %'],
+      r.projUtil.map(function (p) { var pct = num(p.budget) > 0 ? Math.round(num(p.spent) / num(p.budget) * 100) : 0; return [p.name, p.budget, p.spent, num(p.budget) - num(p.spent), pct]; }));
+
+    out += sheet('CONSTRUCTION DETAILS', ['Project', 'Construction', 'Structure', 'Foundation', 'Roofing', 'Floors', 'Units', 'Plot Area (sqft)', 'Built-up (sqft)'],
+      r.construction.map(function (d) { return [d.project, d.construction_type, d.structure_type, d.foundation_type, d.roofing_type, num(d.num_floors), num(d.num_units), num(d.plot_area), num(d.builtup_sqft)]; }));
+
+    out += sheet('PROJECT MATERIALS', ['Project', 'Material', 'Category', 'Quantity', 'Unit', 'Unit Cost (' + cur + ')', 'Amount (' + cur + ')', 'Used', 'Left', 'Supplier', 'Date & Time'],
+      r.projMaterials.map(function (m) { return [m.project, m.name, m.category, m.quantity, m.unit, m.cost, m.total_cost, m.used_qty, m.left, m.supplier, m.purchase_date]; }),
+      ['TOTAL', '', '', '', '', '', r.projMaterialTotal, '', '', '', '']);
+
+    out += sheet('MATERIALS INVENTORY', ['Material', 'Category', 'Unit', 'In Stock', 'Min Stock', 'Rate (' + cur + ')', 'Stock Value (' + cur + ')', 'Supplier', 'Status'],
+      r.inventory.map(function (m) { return [m.name, m.category, m.unit, m.stock, m.min_stock, m.rate, m.value, m.supplier, m.low ? 'LOW STOCK' : 'OK']; }),
+      ['TOTAL', '', '', '', '', '', r.inventoryValue, '', '']);
+
+    out += sheet('PURCHASE ORDERS', ['Order Date', 'Supplier', 'Item', 'Qty', 'Rate (' + cur + ')', 'Total (' + cur + ')', 'Status', 'Expected', 'Project'],
+      r.purchaseOrders.map(function (o) { return [o.order_date, o.supplier, o.item, o.qty, o.rate, o.total, stat(o.status), o.expected_date, o.project]; }),
+      ['TOTAL', '', '', '', '', r.poTotal, '', '', '']);
+
+    out += sheet('ACCOUNTS', ['Account', 'Type', 'Balance (' + cur + ')', 'Currency'],
+      r.accounts.map(function (a2) { return [a2.name, stat(a2.type), a2.balance, a2.currency]; }),
+      ['TOTAL', '', r.accountsTotal, '']);
+
+    out += sheet('CLIENTS', ['Client', 'Company', 'City', 'Status', 'Projects', 'Portfolio Value (' + cur + ')'],
+      r.clients.map(function (c) { return [c.name, c.company, c.city, stat(c.status), c.projects, c.value]; }));
+
+    out += sheet('TRANSACTIONS LEDGER', ['Date', 'Description', 'Category', 'Project', 'Type', 'Amount (' + cur + ')'],
+      r.txns.map(function (t) { return [t.txn_date, t.description, t.category, t.pname || '-', TZ.ucfirst(t.type), t.amount]; }));
+
+    out += '</body></html>';
+
+    var blob = new Blob(['﻿' + out], { type: 'application/vnd.ms-excel;charset=utf-8' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'trackzo-report-' + TZ.todayISO() + '.xls';
+    a.download = 'trackzo-full-report-' + TZ.todayISO() + '.xls';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
   }

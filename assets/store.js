@@ -325,10 +325,56 @@
     }).sort(function (a, b) { return b.val - a.val; });
 
     var projName = {}; projects.forEach(function (p) { projName[p.id] = p.name; });
+    var clientName = {}; clients.forEach(function (c) { clientName[c.id] = c.name; });
     var ledger = txns.slice().sort(function (a, b) { var d = String(b.txn_date).localeCompare(String(a.txn_date)); return d !== 0 ? d : b.id - a.id; })
       .map(function (t) { return { txn_date: t.txn_date, description: t.description, category: t.category, type: t.type, amount: n(t.amount), status: t.status, pname: projName[t.project_id] || '' }; });
 
-    return { income: income, expense: expense, pending: pending, net: income - expense, profit: income - expense, byCat: byCat, catMax: catMax, projUtil: projUtil, topClients: topClients, txns: ledger };
+    // ---- Extended data for full report/export ----
+    var projectsFull = projects.slice().sort(function (a, b) { return n(b.budget) - n(a.budget); }).map(function (p) {
+      return { id: p.id, name: p.name, type: p.type || '', status: p.status || '', client: clientName[p.client_id] || '',
+        budget: n(p.budget), spent: n(p.spent), remaining: n(p.budget) - n(p.spent), progress: n(p.progress),
+        area: n(p.area), floors: n(p.floors), manager: p.manager || '', start_date: p.start_date || '', end_date: p.end_date || '' };
+    });
+
+    var details = db.all('project_details');
+    var construction = details.map(function (d) {
+      return { project: projName[d.project_id] || ('#' + d.project_id), construction_type: d.construction_type || '', structure_type: d.structure_type || '',
+        foundation_type: d.foundation_type || '', roofing_type: d.roofing_type || '', num_floors: d.num_floors, num_units: d.num_units,
+        plot_area: d.plot_area, builtup_sqft: d.builtup_sqft };
+    }).filter(function (x) { return x.construction_type || x.structure_type || x.foundation_type || x.roofing_type || x.num_floors || x.num_units || x.plot_area || x.builtup_sqft; });
+
+    var projMaterials = db.all('project_materials').map(function (m) {
+      return { project: projName[m.project_id] || '', name: m.name || '', category: m.category || '', quantity: n(m.quantity), unit: m.unit || '',
+        cost: n(m.cost), total_cost: n(m.total_cost), used_qty: n(m.used_qty), left: n(m.quantity) - n(m.used_qty), supplier: m.supplier || '', purchase_date: m.purchase_date || '' };
+    }).sort(function (a, b) { return a.project < b.project ? -1 : (a.project > b.project ? 1 : (a.name < b.name ? -1 : 1)); });
+    var projMaterialTotal = projMaterials.reduce(function (a, m) { return a + m.total_cost; }, 0);
+
+    var inventory = db.all('materials').map(function (m) {
+      return { name: m.name || '', category: m.category || '', unit: m.unit || '', stock: n(m.stock), min_stock: n(m.min_stock), rate: n(m.rate),
+        value: n(m.stock) * n(m.rate), supplier: m.supplier || '', low: n(m.stock) < n(m.min_stock) };
+    });
+    var inventoryValue = inventory.reduce(function (a, m) { return a + m.value; }, 0);
+
+    var purchaseOrders = db.all('purchase_orders').map(function (o) {
+      return { supplier: o.supplier || '', item: o.item || '', qty: n(o.qty), rate: n(o.rate), total: n(o.total), status: o.status || '',
+        order_date: o.order_date || '', expected_date: o.expected_date || '', project: projName[o.project_id] || '' };
+    }).sort(function (a, b) { return String(b.order_date).localeCompare(String(a.order_date)); });
+    var poTotal = purchaseOrders.reduce(function (a, o) { return a + o.total; }, 0);
+
+    var accounts = db.all('accounts').map(function (a2) { return { name: a2.name || '', type: a2.type || '', balance: n(a2.balance), currency: a2.currency || 'INR' }; });
+    var accountsTotal = accounts.reduce(function (a, x) { return a + x.balance; }, 0);
+
+    var clientsFull = clients.map(function (c) {
+      var mine = projects.filter(function (p) { return p.client_id === c.id; });
+      return { name: c.name || '', company: c.company || '', email: c.email || '', phone: c.phone || '', city: c.city || '', status: c.status || '',
+        projects: mine.length, value: mine.reduce(function (a, p) { return a + n(p.budget); }, 0) };
+    }).sort(function (a, b) { return b.value - a.value; });
+
+    return { income: income, expense: expense, pending: pending, net: income - expense, profit: income - expense,
+      byCat: byCat, catMax: catMax, projUtil: projUtil, topClients: topClients, txns: ledger,
+      projects: projectsFull, construction: construction, projMaterials: projMaterials, projMaterialTotal: projMaterialTotal,
+      inventory: inventory, inventoryValue: inventoryValue, purchaseOrders: purchaseOrders, poTotal: poTotal,
+      accounts: accounts, accountsTotal: accountsTotal, clients: clientsFull };
   }
 
   /* ---------------- Seed: admin login only (no business dummy data) ---------------- */

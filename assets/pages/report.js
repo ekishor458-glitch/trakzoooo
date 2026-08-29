@@ -2,10 +2,8 @@
 (function () {
   if (!TZ.currentUser()) { location.replace('login.html'); return; }
   var e = TZ.esc;
-  var r = TZ.reportData();
   var cur = TZ.CUR;
   function mny(v) { v = Number(v) || 0; return cur + (v < 0 ? '-' : '') + TZ.inrGroup(Math.abs(v)); }
-  var generated = TZ.reportStamp();
 
   var css =
     '*{box-sizing:border-box;margin:0;padding:0}' +
@@ -28,9 +26,30 @@
     '@media print{.toolbar{display:none}body{padding:0}}';
   var st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
 
+  function num(v) { return Number(v) || 0; }
+  function stat(s) { return TZ.ucfirst(TZ.dashToSpace(s || '')); }
+  function M(v) { return { __html: mny(v) }; }          // money cell
+  function N(v) { return { __html: TZ.trimNum(v, 2) }; } // plain number cell
+  // Build a titled table. cols=[{t,a}], rows=[[cell,...]], optional bold total row.
+  function T(title, cols, rows, totalRow) {
+    function cell(c, i, style) {
+      var a = cols[i] && cols[i].a ? ' class="' + cols[i].a + '"' : '';
+      var v = (c && c.__html != null) ? c.__html : e(c == null ? '' : c);
+      return '<td' + a + (style ? ' style="' + style + '"' : '') + '>' + v + '</td>';
+    }
+    var head = cols.map(function (c) { return '<th' + (c.a ? ' class="' + c.a + '"' : '') + '>' + e(c.t) + '</th>'; }).join('');
+    var body = rows.length ? rows.map(function (cells) { return '<tr>' + cells.map(function (c, i) { return cell(c, i); }).join('') + '</tr>'; }).join('')
+      : '<tr><td colspan="' + cols.length + '" style="color:#94a3b8">None recorded</td></tr>';
+    var tot = totalRow ? '<tr>' + totalRow.map(function (c, i) { return cell(c, i, 'font-weight:700;background:#f1f5f9'); }).join('') + '</tr>' : '';
+    return '<h2>' + e(title) + '</h2><table><thead><tr>' + head + '</tr></thead><tbody>' + body + tot + '</tbody></table>';
+  }
+
+  (TZ.ready || Promise.resolve()).then(function () {
+  var r = TZ.reportData();
+  var generated = TZ.reportStamp();
   var h =
     '<div class="toolbar"><button class="btn" onclick="window.print()">🖨 Save as PDF</button><a class="btn grey" href="reports.html">Back</a></div>' +
-    '<div class="bar"><div class="brand"><div class="logo">T</div><div><h1>Trackzo — Business Report</h1><div class="sub">Construction ERP · all amounts in Indian Rupees (' + cur + ')</div></div></div>' +
+    '<div class="bar"><div class="brand"><div class="logo">T</div><div><h1>Trackzo — Full Business Report</h1><div class="sub">Construction ERP · all amounts in Indian Rupees (' + cur + ')</div></div></div>' +
       '<div class="sub" style="text-align:right">Generated<br><strong>' + e(generated) + '</strong></div></div>' +
 
     '<div class="cards">' +
@@ -40,19 +59,42 @@
       '<div class="card"><div class="k">Net Position</div><div class="v ' + (r.net < 0 ? 'neg' : 'pos') + '">' + mny(r.net) + '</div></div>' +
     '</div>' +
 
-    '<h2>Expenses by Category</h2><table><thead><tr><th>Category</th><th class="r">Amount</th></tr></thead><tbody>' +
-      r.byCat.map(function (c) { return '<tr><td>' + e(c.category) + '</td><td class="r">' + mny(c.total) + '</td></tr>'; }).join('') + '</tbody></table>' +
+    T('Expenses by Category', [{ t: 'Category' }, { t: 'Amount', a: 'r' }],
+      r.byCat.map(function (c) { return [c.category, M(c.total)]; })) +
 
-    '<h2>Project Budget Utilization</h2><table><thead><tr><th>Project</th><th class="r">Budget</th><th class="r">Spent</th><th class="r">Remaining</th><th class="c">Used %</th></tr></thead><tbody>' +
-      r.projUtil.map(function (p) { var pct = p.budget > 0 ? Math.round(p.spent / p.budget * 100) : 0; return '<tr><td>' + e(p.name) + '</td><td class="r">' + mny(p.budget) + '</td><td class="r">' + mny(p.spent) + '</td><td class="r">' + mny(p.budget - p.spent) + '</td><td class="c">' + pct + '%</td></tr>'; }).join('') + '</tbody></table>' +
+    T('Projects Overview', [{ t: 'Project' }, { t: 'Client' }, { t: 'Type' }, { t: 'Status', a: 'c' }, { t: 'Budget', a: 'r' }, { t: 'Spent', a: 'r' }, { t: 'Remaining', a: 'r' }, { t: 'Progress', a: 'c' }],
+      r.projects.map(function (p) { return [p.name, p.client, p.type, stat(p.status), M(p.budget), M(p.spent), M(p.remaining), { __html: p.progress + '%' }]; })) +
 
-    '<h2>Top Clients by Portfolio Value</h2><table><thead><tr><th>Client</th><th>Company</th><th class="c">Projects</th><th class="r">Portfolio Value</th></tr></thead><tbody>' +
-      r.topClients.map(function (c) { return '<tr><td>' + e(c.name) + '</td><td>' + e(c.company) + '</td><td class="c">' + c.pc + '</td><td class="r">' + mny(c.val) + '</td></tr>'; }).join('') + '</tbody></table>' +
+    T('Project Budget Utilization', [{ t: 'Project' }, { t: 'Budget', a: 'r' }, { t: 'Spent', a: 'r' }, { t: 'Remaining', a: 'r' }, { t: 'Used %', a: 'c' }],
+      r.projUtil.map(function (p) { var pct = p.budget > 0 ? Math.round(p.spent / p.budget * 100) : 0; return [p.name, M(p.budget), M(p.spent), M(p.budget - p.spent), { __html: pct + '%' }]; })) +
 
-    '<h2>Transactions Ledger</h2><table><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Type</th><th class="r">Amount</th></tr></thead><tbody>' +
-      r.txns.map(function (t) { return '<tr><td>' + e(t.txn_date) + '</td><td>' + e(t.description) + '</td><td>' + e(t.category) + '</td><td>' + TZ.ucfirst(t.type) + '</td><td class="r ' + (t.type === 'income' ? 'pos' : 'neg') + '">' + (t.type === 'income' ? '+' : '-') + mny(t.amount) + '</td></tr>'; }).join('') + '</tbody></table>';
+    T('Construction Details', [{ t: 'Project' }, { t: 'Construction' }, { t: 'Structure' }, { t: 'Foundation' }, { t: 'Roofing' }, { t: 'Floors', a: 'c' }, { t: 'Units', a: 'c' }, { t: 'Plot (sqft)', a: 'r' }, { t: 'Built-up (sqft)', a: 'r' }],
+      r.construction.map(function (d) { return [d.project, d.construction_type, d.structure_type, d.foundation_type, d.roofing_type, { __html: String(num(d.num_floors)) }, { __html: String(num(d.num_units)) }, N(d.plot_area), N(d.builtup_sqft)]; })) +
+
+    T('Project Materials', [{ t: 'Project' }, { t: 'Material' }, { t: 'Category' }, { t: 'Qty', a: 'r' }, { t: 'Unit' }, { t: 'Unit Cost', a: 'r' }, { t: 'Amount', a: 'r' }, { t: 'Used', a: 'r' }, { t: 'Left', a: 'r' }, { t: 'Supplier' }, { t: 'Date & Time' }],
+      r.projMaterials.map(function (m) { return [m.project, m.name, m.category, N(m.quantity), m.unit, M(m.cost), M(m.total_cost), N(m.used_qty), N(m.left), m.supplier, m.purchase_date]; }),
+      ['Total', '', '', '', '', '', M(r.projMaterialTotal), '', '', '', '']) +
+
+    T('Materials Inventory', [{ t: 'Material' }, { t: 'Category' }, { t: 'Unit' }, { t: 'In Stock', a: 'r' }, { t: 'Min', a: 'r' }, { t: 'Rate', a: 'r' }, { t: 'Stock Value', a: 'r' }, { t: 'Supplier' }, { t: 'Status', a: 'c' }],
+      r.inventory.map(function (m) { return [m.name, m.category, m.unit, N(m.stock), N(m.min_stock), M(m.rate), M(m.value), m.supplier, { __html: m.low ? '<span class="neg">LOW</span>' : 'OK' }]; }),
+      ['Total', '', '', '', '', '', M(r.inventoryValue), '', '']) +
+
+    T('Purchase Orders', [{ t: 'Order Date' }, { t: 'Supplier' }, { t: 'Item' }, { t: 'Qty', a: 'r' }, { t: 'Rate', a: 'r' }, { t: 'Total', a: 'r' }, { t: 'Status', a: 'c' }, { t: 'Project' }],
+      r.purchaseOrders.map(function (o) { return [o.order_date, o.supplier, o.item, N(o.qty), M(o.rate), M(o.total), stat(o.status), o.project]; }),
+      ['Total', '', '', '', '', M(r.poTotal), '', '']) +
+
+    T('Accounts', [{ t: 'Account' }, { t: 'Type' }, { t: 'Balance', a: 'r' }, { t: 'Currency', a: 'c' }],
+      r.accounts.map(function (a2) { return [a2.name, stat(a2.type), M(a2.balance), a2.currency]; }),
+      ['Total', '', M(r.accountsTotal), '']) +
+
+    T('Clients', [{ t: 'Client' }, { t: 'Company' }, { t: 'City' }, { t: 'Status', a: 'c' }, { t: 'Projects', a: 'c' }, { t: 'Portfolio Value', a: 'r' }],
+      r.clients.map(function (c) { return [c.name, c.company, c.city, stat(c.status), { __html: String(c.projects) }, M(c.value)]; })) +
+
+    T('Transactions Ledger', [{ t: 'Date' }, { t: 'Description' }, { t: 'Category' }, { t: 'Type' }, { t: 'Amount', a: 'r' }],
+      r.txns.map(function (t) { return [t.txn_date, t.description, t.category, TZ.ucfirst(t.type), { __html: '<span class="' + (t.type === 'income' ? 'pos' : 'neg') + '">' + (t.type === 'income' ? '+' : '-') + mny(t.amount) + '</span>' }]; }));
 
   document.getElementById('app').innerHTML = h;
   document.title = 'Trackzo Report — ' + TZ.todayISO();
-  window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 400); });
+  setTimeout(function () { window.print(); }, 400);
+  });
 })();
