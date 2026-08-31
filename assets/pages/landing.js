@@ -146,6 +146,42 @@
     });
   }
 
+  /* ---------------- Hero house carousel (auto horizontal scroll) ---------------- */
+  (function initHouseCarousel() {
+    var track = $('#hc-track');
+    if (!track) return;
+    var slides = $all('.hc-slide', track);
+    var dots = $all('#hc-dots .hc-dot');
+    if (slides.length < 2) return;
+    var idx = 0, timer = null, scrollDebounce = null;
+
+    function slideW() { return track.clientWidth; }
+    function setDots() { dots.forEach(function (d, k) { d.classList.toggle('is-active', k === idx); }); }
+    function goTo(i, smooth) {
+      idx = (i + slides.length) % slides.length;
+      track.scrollTo({ left: idx * slideW(), behavior: (smooth && !REDUCED) ? 'smooth' : 'auto' });
+      setDots();
+    }
+    function start() { if (REDUCED) return; stop(); timer = setInterval(function () { goTo(idx + 1, true); }, 3800); }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+    // keep dots in sync when the user swipes/scrolls the strip manually
+    track.addEventListener('scroll', function () {
+      clearTimeout(scrollDebounce);
+      scrollDebounce = setTimeout(function () {
+        var i = Math.round(track.scrollLeft / slideW());
+        if (i !== idx) { idx = i; setDots(); }
+      }, 90);
+    }, { passive: true });
+
+    dots.forEach(function (d, k) { d.addEventListener('click', function () { goTo(k, true); start(); }); });
+    track.addEventListener('pointerenter', stop);
+    track.addEventListener('pointerleave', start);
+    window.addEventListener('resize', function () { goTo(idx, false); });
+
+    start();
+  })();
+
   /* ================================================================== */
   /* Featured projects — live data from TZ (showcase fallback)          */
   /* ================================================================== */
