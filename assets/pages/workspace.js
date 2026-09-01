@@ -35,6 +35,10 @@
     num_floors: 'Number of floors', num_units: 'Number of units', construction_notes: 'Construction notes',
   };
   var badge = { active: 'bg-blue-100 text-blue-700', completed: 'bg-emerald-100 text-emerald-700', 'on-hold': 'bg-amber-100 text-amber-700', planning: 'bg-slate-100 text-slate-600' };
+  // Cost estimation heads (Labour / Material / …) with a colour each.
+  var EST_HEADS = ['Labour', 'Material', 'Equipment', 'Contractor', 'Overhead', 'Misc'];
+  var EST_HEAD_COLORS = { Labour: '#F59E0B', Material: '#1D4ED8', Equipment: '#8B5CF6', Contractor: '#10B981', Overhead: '#EF4444', Misc: '#64748B' };
+  function estHead(it) { var h = it && it.cost_head && String(it.cost_head).trim(); return EST_HEADS.indexOf(h) >= 0 ? h : 'Misc'; }
 
   var pid = parseInt(TZ.qs('project'), 10) || 0;
   var section = TZ.qs('section') || 'overview';
@@ -343,7 +347,7 @@
     return list;
   }
 
-  /* ---- COST ESTIMATION (floor-wise) ---- */
+  /* ---- COST ESTIMATION (floor-wise, broken down by cost head) ---- */
   function sec_estimation(c) {
     var items = TZ.db.where('project_estimates', function (i) { return i.project_id === pid; }).sort(function (a, b) { return a.id - b.id; });
     var estTotal = items.reduce(function (a, it) { return a + num(it.amount); }, 0);
@@ -351,17 +355,34 @@
     // Group line items by floor
     var groups = {}, present = [];
     items.forEach(function (it) {
-      var fl = (it.floor && String(it.floor).trim()) || 'Unassigned';
-      if (!groups[fl]) { groups[fl] = { floor: fl, items: [], total: 0 }; present.push(fl); }
-      groups[fl].items.push(it); groups[fl].total += num(it.amount);
+      var flr = (it.floor && String(it.floor).trim()) || 'Unassigned';
+      if (!groups[flr]) { groups[flr] = { floor: flr, items: [], total: 0 }; present.push(flr); }
+      groups[flr].items.push(it); groups[flr].total += num(it.amount);
     });
     var fl = floorList(c);
     var floorOpts = {}; fl.forEach(function (f) { floorOpts[f] = f; });
+    var headOpts = {}; EST_HEADS.forEach(function (h) { headOpts[h] = h; });
     var order = [];
     fl.forEach(function (f) { if (groups[f]) order.push(f); });
     present.forEach(function (f) { if (order.indexOf(f) < 0) order.push(f); });
 
-    var summary = order.length ? '<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">' + order.map(function (f) {
+    // Subtotal per cost head across the whole estimate
+    var headTot = {}; EST_HEADS.forEach(function (h) { headTot[h] = 0; });
+    items.forEach(function (it) { var h = estHead(it); headTot[h] += num(it.amount); });
+    var hmax = 1; EST_HEADS.forEach(function (h) { hmax = Math.max(hmax, headTot[h]); });
+
+    var headPanel = '<div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">' +
+      '<div class="flex items-center justify-between mb-3"><h3 class="font-bold text-slate-900 text-sm font-display">Cost Heads Breakdown</h3>' +
+        '<span class="text-xs text-slate-400">Grand total <span class="font-semibold text-slate-700">' + money(estTotal) + '</span></span></div>' +
+      '<div class="space-y-2.5">' + EST_HEADS.map(function (h) {
+        var t = headTot[h] || 0, pctT = estTotal > 0 ? Math.round(t / estTotal * 100) : 0;
+        return '<div><div class="flex justify-between text-xs mb-1">' +
+          '<span class="font-medium text-slate-600 flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-full" style="background:' + EST_HEAD_COLORS[h] + '"></span>' + e(h) + '</span>' +
+          '<span class="text-slate-500"><span class="font-semibold text-slate-700">' + money(t) + '</span> · ' + pctT + '%</span></div>' +
+          '<div class="bg-slate-100 rounded-full h-2"><div class="h-2 rounded-full" style="width:' + (t / hmax * 100) + '%;background:' + EST_HEAD_COLORS[h] + '"></div></div></div>';
+      }).join('') + '</div></div>';
+
+    var floorSummary = order.length ? '<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">' + order.map(function (f) {
       var g = groups[f];
       return '<div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-4"><p class="text-xs text-slate-500">' + e(g.floor) + '</p>' +
         '<p class="text-lg font-bold text-slate-900 font-display">' + money(g.total) + '</p>' +
@@ -374,8 +395,10 @@
         '<td colspan="4" class="px-4 py-2.5"><span class="font-bold text-slate-800">' + e(g.floor) + '</span> <span class="text-[11px] text-slate-400 ml-1">' + g.items.length + ' item' + (g.items.length > 1 ? 's' : '') + '</span></td>' +
         '<td class="px-4 py-2.5 text-right font-bold text-brand">' + money(g.total) + '</td><td></td></tr>';
       var rows = g.items.map(function (it) {
+        var h = estHead(it), col = EST_HEAD_COLORS[h];
         return '<tr class="hover:bg-slate-50/70">' +
-          '<td class="px-4 py-3 font-medium text-slate-800">' + e(it.description) + '</td>' +
+          '<td class="px-4 py-3 font-medium text-slate-800">' + e(it.description) +
+            '<span class="ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-md align-middle whitespace-nowrap" style="background:' + col + '1f;color:' + col + '">' + e(h) + '</span></td>' +
           '<td class="px-4 py-3 hidden sm:table-cell text-slate-500">' + e(it.unit) + '</td>' +
           '<td class="px-4 py-3 text-right text-slate-600">' + trimNum(it.qty, 2) + '</td>' +
           '<td class="px-4 py-3 text-right text-slate-600">' + money(it.rate) + '</td>' +
@@ -384,25 +407,27 @@
       }).join('');
       return header + rows;
     }).join('');
-    if (!items.length) body = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-400">No estimate lines yet. Pick a floor and add one below.</td></tr>';
+    if (!items.length) body = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-400">No estimate lines yet. Pick a floor and cost head, then add one below.</td></tr>';
     var foot = items.length ? '<tfoot><tr class="bg-slate-50 border-t-2 border-slate-200"><td colspan="4" class="px-4 py-2.5 text-right text-xs font-semibold text-slate-500 uppercase">Grand total (all floors)</td><td class="px-4 py-2.5 text-right font-bold text-brand">' + money(estTotal) + '</td><td></td></tr></tfoot>' : '';
 
-    return sectionHead('Cost Estimation', 'Floor-wise estimate — each floor shows its total amount and the materials / work used') +
-      summary +
+    return sectionHead('Cost Estimation', 'Floor-wise estimate broken down by cost head — Labour, Material, Equipment & more') +
+      headPanel +
+      floorSummary +
       '<div class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
         '<thead><tr class="text-left text-xs text-slate-400 uppercase tracking-wider bg-slate-50 border-b border-slate-100">' +
-          '<th class="px-4 py-3 font-semibold">Material / Work</th><th class="px-4 py-3 font-semibold hidden sm:table-cell">Unit</th>' +
+          '<th class="px-4 py-3 font-semibold">Material / Work · Head</th><th class="px-4 py-3 font-semibold hidden sm:table-cell">Unit</th>' +
           '<th class="px-4 py-3 font-semibold text-right">Qty</th><th class="px-4 py-3 font-semibold text-right">Rate</th>' +
           '<th class="px-4 py-3 font-semibold text-right">Amount</th><th class="px-4 py-3"></th></tr></thead>' +
         '<tbody class="divide-y divide-slate-100">' + body + '</tbody>' + foot + '</table></div></div>' +
       '<div class="bg-white rounded-2xl border border-slate-100 shadow-sm p-5"><p class="text-sm font-bold text-slate-800 font-display mb-3">Add line to a floor</p>' +
         '<form id="estForm" class="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">' +
           S('Floor', 'floor', floorOpts, 'Floor 1') +
-          '<div class="col-span-2">' + F('Material / Work', 'description', '', 'text', 'e.g. Cement, Steel, RCC slab') + '</div>' +
-          F('Unit', 'unit', '', 'text', 'Sq.ft / Bags') + F('Qty', 'qty', '1', 'number', '0', 'step="0.01"') + F('Rate (' + CUR + ')', 'rate', '0', 'number', '0', 'step="0.01"') +
+          S('Cost head', 'cost_head', headOpts, 'Labour') +
+          '<div class="col-span-2">' + F('Material / Work', 'description', '', 'text', 'e.g. Mason work, Cement, RCC slab') + '</div>' +
+          F('Unit', 'unit', '', 'text', 'Sq.ft / Bags / Days') + F('Qty', 'qty', '1', 'number', '0', 'step="0.01"') + F('Rate (' + CUR + ')', 'rate', '0', 'number', '0', 'step="0.01"') +
           '<div class="col-span-2 md:col-span-6"><button class="px-5 py-2.5 bg-brand hover:bg-brand-hover text-white text-sm font-semibold rounded-xl flex items-center gap-1.5">' + icon('plus', 16) + 'Add line</button></div>' +
         '</form>' +
-        '<p class="text-[11px] text-slate-400 mt-2">Choose the floor, then add each material / work item with its quantity and rate. Amount = Qty × Rate. Lines group under their floor with a floor total.</p></div>';
+        '<p class="text-[11px] text-slate-400 mt-2">Pick the floor and cost head (Labour, Material, Equipment…), then the item with its quantity and rate. Amount = Qty × Rate. Totals roll up per floor and per cost head.</p></div>';
   }
 
   /* ---- EXPENSE TRACKER ---- */
@@ -580,7 +605,7 @@
 
     onSubmit('estForm', function (d) {
       var qty = Number(d.qty) || 0, rate = Number(d.rate) || 0;
-      TZ.db.insert('project_estimates', { project_id: pid, floor: (d.floor || '').trim(), description: (d.description || '').trim(), unit: (d.unit || '').trim(), qty: qty, rate: rate, amount: qty * rate });
+      TZ.db.insert('project_estimates', { project_id: pid, floor: (d.floor || '').trim(), cost_head: (d.cost_head || 'Misc').trim(), description: (d.description || '').trim(), unit: (d.unit || '').trim(), qty: qty, rate: rate, amount: qty * rate });
       TZ.flash('Estimate line added.'); go();
     });
     delegate(root, 'data-delest', function (id) { if (confirm('Remove line?')) { TZ.db.remove('project_estimates', id); TZ.flash('Line removed.', 'info'); go(); } });

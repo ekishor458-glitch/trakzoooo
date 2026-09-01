@@ -184,11 +184,12 @@
         var opts = (op.key && op.key !== 'id') ? { onConflict: op.key } : undefined;
         return SB.from(op.table).upsert(op.row, opts).then(function (res) {
           if (!res || !res.error) return;
-          // Safety net: if Supabase doesn't have the `owner_email` column yet,
-          // re-save the row WITHOUT it so no data is ever lost (the app still
-          // scopes locally via the ownership index until the column is added).
-          if (op.row && op.row.owner_email != null) {
-            var r2 = {}; Object.keys(op.row).forEach(function (k) { if (k !== 'owner_email') r2[k] = op.row[k]; });
+          // Safety net: if Supabase is missing an app-added optional column
+          // (owner_email / cost_head), re-save the row WITHOUT those columns so
+          // no data is ever lost until the column is added in Supabase.
+          var OPT = ['owner_email', 'cost_head'];
+          if (op.row && OPT.some(function (k) { return op.row[k] != null; })) {
+            var r2 = {}; Object.keys(op.row).forEach(function (k) { if (OPT.indexOf(k) < 0) r2[k] = op.row[k]; });
             return SB.from(op.table).upsert(r2, opts).then(function (res2) { if (res2 && res2.error) remaining.push(op); });
           }
           remaining.push(op);
