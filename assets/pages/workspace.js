@@ -42,18 +42,32 @@
   var newForm = TZ.qs('new') != null;
   var mid = parseInt(TZ.qs('mid'), 10) || 0;
 
+  var requestedPid = parseInt(TZ.qs('project'), 10) || 0;
   var allProjects = TZ.db.all('projects').sort(function (a, b) { return b.id - a.id; });
-  var project = pid > 0 ? TZ.db.get('projects', pid) : null;
+  var project = pid > 0 ? TZ.db.get('projects', pid) : null;   // scoped: null if it isn't yours (admin sees all)
   if (!project) pid = 0;
+  // A specific project was requested but you can't see it → it isn't yours (or doesn't exist).
+  var accessDenied = requestedPid > 0 && !project && !newForm;
 
-  var pageTitle = project ? project.name : 'Project Workspace';
-  var topAction = (!project && !newForm) ? { label: 'New Project', href: 'workspace.html?new=1' } : null;
+  var pageTitle = project ? project.name : (accessDenied ? 'Not available' : 'Project Workspace');
+  var topAction = (!project && !newForm && !accessDenied) ? { label: 'New Project', href: 'workspace.html?new=1' } : null;
 
   TZ.mount({ page: 'workspace', title: pageTitle, action: topAction }, function (root) {
+    if (accessDenied) { renderNoAccess(root); return; }
     if (newForm) { renderNewForm(root); return; }
     if (!project) { renderList(root); return; }
     renderDashboard(root);
   });
+
+  /* ---------------- ACCESS DENIED (project not owned by this account) ---------------- */
+  function renderNoAccess(root) {
+    root.innerHTML = '<div class="p-4 sm:p-6"><div class="max-w-lg mx-auto mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-8 text-center">' +
+      '<div class="w-14 h-14 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center mx-auto mb-4">' + icon('shield', 26) + '</div>' +
+      '<h2 class="text-lg font-bold text-slate-800 font-display mb-1">This project isn’t available on your account</h2>' +
+      '<p class="text-sm text-slate-500 mb-5">You can only open projects that belong to your account. If you think this is a mistake, contact your administrator.</p>' +
+      '<a href="workspace.html" class="inline-flex items-center gap-1.5 px-5 py-2.5 bg-brand hover:bg-brand-hover text-white text-sm font-semibold rounded-xl">' + icon('arrow-left', 15) + ' Back to my projects</a>' +
+      '</div></div>';
+  }
 
   function secUrl(s) { return 'workspace.html?project=' + pid + '&section=' + s; }
   function backUrl() { return 'workspace.html?project=' + pid + '&section=' + section; }
