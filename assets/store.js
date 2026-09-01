@@ -23,6 +23,7 @@
   var USER_KEY = 'trackzo_user';
   var FLASH_KEY = 'trackzo_flash';
   var OUTBOX_KEY = 'trackzo_outbox';
+  var OWNER_KEY = 'trackzo_owner';   // local map of row -> owning account email
   var VER_KEY = 'trackzo_db_v';
   var DB_VERSION = 2;   // bump to force a one-time wipe of stale local business data
 
@@ -176,10 +177,22 @@
     var chain = Promise.resolve();
     a.forEach(function (op) {
       chain = chain.then(function () {
-        var q;
-        if (op.op === 'delete') q = SB.from(op.table).delete().eq(op.key || 'id', op.id);
-        else q = SB.from(op.table).upsert(op.row, (op.key && op.key !== 'id') ? { onConflict: op.key } : undefined);
-        return q.then(function (res) { if (res && res.error) { remaining.push(op); } });
+        if (op.op === 'delete') {
+          return SB.from(op.table).delete().eq(op.key || 'id', op.id)
+            .then(function (res) { if (res && res.error) remaining.push(op); });
+        }
+        var opts = (op.key && op.key !== 'id') ? { onConflict: op.key } : undefined;
+        return SB.from(op.table).upsert(op.row, opts).then(function (res) {
+          if (!res || !res.error) return;
+          // Safety net: if Supabase doesn't have the `owner_email` column yet,
+          // re-save the row WITHOUT it so no data is ever lost (the app still
+          // scopes locally via the ownership index until the column is added).
+          if (op.row && op.row.owner_email != null) {
+            var r2 = {}; Object.keys(op.row).forEach(function (k) { if (k !== 'owner_email') r2[k] = op.row[k]; });
+            return SB.from(op.table).upsert(r2, opts).then(function (res2) { if (res2 && res2.error) remaining.push(op); });
+          }
+          remaining.push(op);
+        });
       }).catch(function () { remaining.push(op); });
     });
     return chain.then(function () { setOutbox(remaining); flushing = false; })
@@ -195,7 +208,7 @@
         if (res.error) { if (window.console) console.warn('[Trackzo] pull ' + t + ':', res.error.message); return; }
         DB[t] = res.data || [];
       }, function () { /* network error: keep local copy */ });
-    })).then(function () { applyOutbox(); persist(); });
+    })).then(function () { applyOutbox(); applyOwnerIdx(); persist(); });
   }
 
   /* ---------------- Bootstrap (awaited by every page via TZ.ready) ---------------- */
@@ -207,49 +220,99 @@
     }).catch(function () {});
   }
 
+  /* ---------------- Per-account data scoping ----------------
+   * ADMIN (ADMIN_EMAIL) can access ALL data. Every other account can access
+   * ONLY the rows it created — never the admin's rows, never another account's.
+   * Each row carries `owner_email` (the account that created it). Enforced here
+   * in the app; for hard server-side enforcement add an `owner_email` column +
+   * RLS in Supabase and switch logins to Supabase Auth (see SETUP notes).
+   * `users` is not scoped — it's managed by the admin-only Admin Panel. */
+  function ownerKey() { var u = currentUser(); return u ? String(u.email).toLowerCase() : null; }
+  function isScoped(t) { return t !== 'users'; }
+  function ownsRow(r) { var k = ownerKey(); return k != null && !!r && String(r.owner_email || '').toLowerCase() === k; }
+  function canRead(t, r) { return !isScoped(t) || isAdmin() || ownsRow(r); }
+  function canWrite(t, r) { return isAdmin() || (isScoped(t) && ownsRow(r)); }
+  function scopeRows(t, rows) {
+    if (!isScoped(t) || isAdmin()) return rows;
+    var k = ownerKey(); if (k == null) return [];
+    return rows.filter(function (r) { return String(r.owner_email || '').toLowerCase() === k; });
+  }
+  function stampOwner(t, obj) {
+    if (isScoped(t) && obj && !obj.owner_email) { var k = ownerKey(); if (k) obj.owner_email = k; }
+    return obj;
+  }
+  // Local ownership index — lets scoping survive a reload even before the
+  // Supabase `owner_email` column exists (owner is re-applied after each pull).
+  function getOwnerIdx() { try { return JSON.parse(localStorage.getItem(OWNER_KEY) || '{}'); } catch (e) { return {}; } }
+  function recordOwner(t, id, email) {
+    if (!email || !isScoped(t)) return;
+    var ix = getOwnerIdx(); (ix[t] = ix[t] || {})[id] = email;
+    try { localStorage.setItem(OWNER_KEY, JSON.stringify(ix)); } catch (e) {}
+  }
+  function applyOwnerIdx() {
+    var ix = getOwnerIdx();
+    CLOUD_TABLES.forEach(function (t) {
+      var m = ix[t]; if (!m) return;
+      (DB[t] || []).forEach(function (r) {
+        var key = r[keyOf(t)];
+        if (!r.owner_email && m[key]) r.owner_email = m[key];
+      });
+    });
+  }
+
   /* ---------------- db API (synchronous reads; write-through writes) ---------------- */
   var db = {
-    all: function (t) { load(); return DB[t].slice(); },
-    where: function (t, fn) { load(); return DB[t].filter(fn); },
-    get: function (t, id) { load(); id = +id; return DB[t].filter(function (r) { return r.id === id; })[0] || null; },
+    all: function (t) { load(); return scopeRows(t, DB[t].slice()); },
+    where: function (t, fn) { load(); return scopeRows(t, DB[t].filter(fn)); },
+    get: function (t, id) { load(); id = +id; var r = DB[t].filter(function (x) { return x.id === id; })[0] || null; return (r && canRead(t, r)) ? r : null; },
     insert: function (t, obj) {
-      load(); obj.id = nextId(t); DB[t].push(obj); persist();
+      load(); stampOwner(t, obj); obj.id = nextId(t); DB[t].push(obj); persist();
+      recordOwner(t, obj.id, obj.owner_email);
       if (isCloud(t)) enqueue({ op: 'upsert', table: t, row: obj });
       return obj.id;
     },
     update: function (t, id, patch) {
-      load(); var r = db.get(t, id);
-      if (r) {
-        Object.keys(patch).forEach(function (k) { r[k] = patch[k]; }); persist();
+      load(); var r = db.get(t, id);                       // scoped read: null if not yours (unless admin)
+      if (r && canWrite(t, r)) {
+        Object.keys(patch).forEach(function (k) { if (k !== 'owner_email') r[k] = patch[k]; }); persist();
         if (isCloud(t)) enqueue({ op: 'upsert', table: t, row: r });
       }
       return r;
     },
     remove: function (t, id) {
-      load(); id = +id; DB[t] = DB[t].filter(function (r) { return r.id !== id; }); persist();
+      load(); id = +id;
+      var row = DB[t].filter(function (r) { return r.id === id; })[0];
+      if (row && !canWrite(t, row)) return;                // can't delete rows you don't own
+      DB[t] = DB[t].filter(function (r) { return r.id !== id; }); persist();
       if (isCloud(t)) enqueue({ op: 'delete', table: t, id: id });
     },
     removeWhere: function (t, fn) {
-      load(); var del = DB[t].filter(fn);
-      DB[t] = DB[t].filter(function (r) { return !fn(r); }); persist();
+      load();
+      var del = DB[t].filter(function (r) { return fn(r) && canWrite(t, r); });
+      var ids = {}; del.forEach(function (r) { ids[r.id] = 1; });
+      DB[t] = DB[t].filter(function (r) { return !ids[r.id]; }); persist();
       if (isCloud(t)) del.forEach(function (r) { enqueue({ op: 'delete', table: t, id: r.id }); });
     },
     // project_details keyed by project_id (one row per project)
     detail: function (pid) {
       load(); pid = +pid;
       var r = DB.project_details.filter(function (d) { return d.project_id === pid; })[0];
-      if (!r) { r = { project_id: pid }; DB.project_details.push(r); persist(); enqueue({ op: 'upsert', table: 'project_details', row: r, key: 'project_id' }); }
+      if (r) return (isAdmin() || ownsRow(r)) ? r : { project_id: pid };   // not yours: blank, not persisted
+      r = { project_id: pid }; stampOwner('project_details', r);
+      DB.project_details.push(r); persist(); recordOwner('project_details', pid, r.owner_email);
+      enqueue({ op: 'upsert', table: 'project_details', row: r, key: 'project_id' });
       return r;
     },
     saveDetail: function (pid, patch) {
       var r = db.detail(pid);
-      Object.keys(patch).forEach(function (k) { r[k] = patch[k]; });
+      if (!isAdmin() && !ownsRow(r)) return r;             // not yours: ignore
+      Object.keys(patch).forEach(function (k) { if (k !== 'owner_email') r[k] = patch[k]; });
       persist();
       enqueue({ op: 'upsert', table: 'project_details', row: r, key: 'project_id' });
       return r;
     },
     save: function () { persist(); scheduleFlush(); return true; },
-    reset: function () { localStorage.removeItem(DB_KEY); localStorage.removeItem(OUTBOX_KEY); DB = null; load(); },
+    reset: function () { localStorage.removeItem(DB_KEY); localStorage.removeItem(OUTBOX_KEY); localStorage.removeItem(OWNER_KEY); DB = null; load(); },
   };
 
   /* ---------------- Flash messages ---------------- */
